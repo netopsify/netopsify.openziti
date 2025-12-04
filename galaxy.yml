@@ -1,0 +1,17 @@
+namespace: netopsify
+name: openziti
+version: 1.0.0
+readme: README.md
+authors:
+  - Mirza Waqas Ahmed <waqas@netopsify.net>
+description: Ansible Collection for managing OpenZiti Infrastructure by Netopsify
+license: MIT
+tags:
+  - openziti
+  - networking
+  - security
+repository: http://github.com/netopsify/netopsify.openziti
+documentation: http://github.com/netopsify/netopsify.openziti
+homepage: http://github.com/netopsify/netopsify.openziti
+issues: http://github.com/netopsify/netopsify.openziti/issues
+build_ignore: []

@@ -1,0 +1,26 @@
+---
+# tasks file for openziti_identity
+
+- name: Ensure OpenZiti Identity exists
+  netopsify.openziti.openziti_identity:
+    ziti_controller_url: "{{ openziti_controller_url }}"
+    ziti_username: "{{ openziti_admin_username }}"
+    ziti_password: "{{ openziti_admin_password }}"
+    identity_name: "{{ item.name }}"
+    identity_type: "{{ item.type | default('Device') }}"
+    role_attributes: "{{ item.role_attributes | default([]) }}"
+    enrollment_method: "{{ item.enrollment_method | default('ott') }}"
+    jwt_output_dir: "{{ openziti_jwt_output_dir | default(omit) }}"
+    state: "{{ item.state | default('present') }}"
+    validate_certs: "{{ openziti_validate_certs }}"
+  loop: "{{ openziti_identities }}"
+  register: identity_results
+  # no_log: true # Protect sensitive data in loop
+
+- name: Display Identity Creation Results
+  debug:
+    msg: "Identity {{ item.item.name }} - {{ 'Created/Updated' if item.changed else 'Already Exists' }}"
+  loop: "{{ identity_results.results }}"
+  loop_control:
+    label: "{{ item.item.name }}"
+  when: identity_results.results is defined

@@ -1,0 +1,16 @@
+---
+galaxy_info:
+  author: Waqas
+  description: Ansible role to manage OpenZiti infrastructure (Services, Policies, Configs).
+  company: AMJC
+  license: BSD
+  min_ansible_version: 2.9
+  platforms:
+    - name: GenericLinux
+      versions:
+        - all
+  categories:
+    - system
+    - networking
+
+dependencies: []

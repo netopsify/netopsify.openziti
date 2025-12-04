@@ -1,0 +1,22 @@
+---
+# defaults file for openziti_identity
+
+# Controller Connection Details
+openziti_controller_url: "https://localhost:1280"
+openziti_admin_username: "admin"
+openziti_admin_password: "password"
+
+# Identity Management
+openziti_identities: []
+# Example format:
+# openziti_identities:
+#   - name: "my-device"
+#     type: "Device"
+#     role_attributes: ["my-device.hosts"]
+#     state: "present"
+
+# Output Directory for JWTs
+openziti_jwt_output_dir: "./openziti-tokens"
+
+# SSL Configuration
+openziti_validate_certs: true

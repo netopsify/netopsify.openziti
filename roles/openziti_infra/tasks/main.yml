@@ -1,0 +1,82 @@
+---
+# tasks file for openziti_infra
+
+- name: Manage OpenZiti Configs
+  netopsify.openziti.openziti_config:
+    ziti_controller_url: "{{ openziti_controller_url }}"
+    ziti_username: "{{ openziti_admin_username }}"
+    ziti_password: "{{ openziti_admin_password }}"
+    config_name: "{{ item.name }}"
+    config_type_name: "{{ item.type }}"
+    data: "{{ item.data }}"
+    state: "{{ item.state | default('present') }}"
+    validate_certs: "{{ openziti_validate_certs }}"
+  loop: "{{ openziti_configs }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when: openziti_configs is defined
+
+- name: Manage OpenZiti Services
+  netopsify.openziti.openziti_service:
+    ziti_controller_url: "{{ openziti_controller_url }}"
+    ziti_username: "{{ openziti_admin_username }}"
+    ziti_password: "{{ openziti_admin_password }}"
+    service_name: "{{ item.name }}"
+    role_attributes: "{{ item.role_attributes | default([]) }}"
+    configs: "{{ item.configs | default([]) }}"
+    encryption_required: "{{ item.encryption_required | default(true) }}"
+    state: "{{ item.state | default('present') }}"
+    validate_certs: "{{ openziti_validate_certs }}"
+  loop: "{{ openziti_services }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when: openziti_services is defined
+
+- name: Manage OpenZiti Service Policies
+  netopsify.openziti.openziti_service_policy:
+    ziti_controller_url: "{{ openziti_controller_url }}"
+    ziti_username: "{{ openziti_admin_username }}"
+    ziti_password: "{{ openziti_admin_password }}"
+    policy_name: "{{ item.name }}"
+    policy_type: "{{ item.type }}"
+    service_roles: "{{ item.service_roles }}"
+    identity_roles: "{{ item.identity_roles }}"
+    semantic: "{{ item.semantic | default('AnyOf') }}"
+    state: "{{ item.state | default('present') }}"
+    validate_certs: "{{ openziti_validate_certs }}"
+  loop: "{{ openziti_service_policies }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when: openziti_service_policies is defined
+
+- name: Manage OpenZiti Router Policies
+  netopsify.openziti.openziti_router_policy:
+    ziti_controller_url: "{{ openziti_controller_url }}"
+    ziti_username: "{{ openziti_admin_username }}"
+    ziti_password: "{{ openziti_admin_password }}"
+    policy_name: "{{ item.name }}"
+    edge_router_roles: "{{ item.edge_router_roles }}"
+    identity_roles: "{{ item.identity_roles }}"
+    semantic: "{{ item.semantic | default('AnyOf') }}"
+    state: "{{ item.state | default('present') }}"
+    validate_certs: "{{ openziti_validate_certs }}"
+  loop: "{{ openziti_router_policies }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when: openziti_router_policies is defined
+
+- name: Manage OpenZiti Service Router Policies
+  netopsify.openziti.openziti_service_router_policy:
+    ziti_controller_url: "{{ openziti_controller_url }}"
+    ziti_username: "{{ openziti_admin_username }}"
+    ziti_password: "{{ openziti_admin_password }}"
+    policy_name: "{{ item.name }}"
+    service_roles: "{{ item.service_roles }}"
+    edge_router_roles: "{{ item.edge_router_roles }}"
+    semantic: "{{ item.semantic | default('AnyOf') }}"
+    state: "{{ item.state | default('present') }}"
+    validate_certs: "{{ openziti_validate_certs }}"
+  loop: "{{ openziti_service_router_policies }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when: openziti_service_router_policies is defined

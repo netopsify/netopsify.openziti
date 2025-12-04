@@ -1,0 +1,15 @@
+---
+# defaults file for openziti_infra
+
+# Controller Connection Details
+openziti_controller_url: "https://localhost:1280"
+openziti_admin_username: "admin"
+openziti_admin_password: "password"
+openziti_validate_certs: true
+
+# Resources Lists
+openziti_configs: []
+openziti_services: []
+openziti_service_policies: []
+openziti_router_policies: []
+openziti_service_router_policies: []
