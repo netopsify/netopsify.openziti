@@ -21,7 +21,14 @@ class FilterModule(object):
                                               If None or empty, processes all.
         """
         if not deployment_data:
-            return {}
+            return {
+                'openziti_identities': [],
+                'openziti_configs': [],
+                'openziti_services': [],
+                'openziti_service_policies': [],
+                'openziti_router_policies': [],
+                'openziti_service_router_policies': []
+            }
 
         # Initialize output lists
         identities = []
