@@ -120,19 +120,41 @@ def main():
     if smart_mode:
         # Check for git repo
         if os.path.exists(os.path.join(base_dir, '.git')):
-            # Get changed files (modified, added)
-            # We look at both staged and unstaged changes
+            # 1. Check for uncommitted changes (LocalOps)
             # git status --porcelain gives us relative paths from root
             lines = run_git_cmd(module, ["git", "status", "--porcelain", "deployments/"], base_dir)
-            for line in lines:
-                if not line.strip(): continue
-                status = line[:2]
-                path = line[3:].strip()
+            
+            if lines:
+                # Parse porcelain output (XY PATH)
+                for line in lines:
+                    if not line.strip(): continue
+                    status = line[:2]
+                    path = line[3:].strip()
+                    
+                    if 'D' in status:
+                        deleted_files.add(path)
+                    else:
+                        changed_files.add(path)
+            else:
+                # 2. If clean, check the latest commit (CI/CD or Post-Commit Local)
+                # We check changes between HEAD~1 and HEAD
+                # git diff --name-status HEAD~1 HEAD deployments/
+                # Output format: STATUS\tPATH
+                lines = run_git_cmd(module, ["git", "diff", "--name-status", "HEAD~1", "HEAD", "deployments/"], base_dir)
                 
-                if 'D' in status:
-                    deleted_files.add(path)
-                else:
-                    changed_files.add(path)
+                for line in lines:
+                    if not line.strip(): continue
+                    parts = line.split(None, 1) # Split by whitespace/tab, max 1 split
+                    if len(parts) < 2: continue
+                    
+                    status = parts[0]
+                    path = parts[1].strip()
+                    
+                    if 'D' in status:
+                        deleted_files.add(path)
+                    else:
+                        changed_files.add(path)
+
         else:
             module.warn("Smart Mode enabled but .git directory not found. Processing ALL files.")
             smart_mode = False
