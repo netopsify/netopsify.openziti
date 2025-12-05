@@ -10,15 +10,15 @@ class FilterModule(object):
             'ziti_transform': self.ziti_transform
         }
 
-    def ziti_transform(self, deployment_data, target_services=None):
+    def ziti_transform(self, deployment_data, target_names=None):
         """
         Transforms the high-level OpenZiti deployment data model into flat lists
         required by the Ansible modules.
         
         Args:
             deployment_data (dict): The full ziti_deployment dictionary.
-            target_services (list, optional): List of service names to filter by. 
-                                              If None or empty, processes all.
+            target_names (list, optional): List of resource names (services/identities) to filter by. 
+                                           If None or empty, processes all.
         """
         if not deployment_data:
             return {
@@ -39,24 +39,30 @@ class FilterModule(object):
         service_router_policies = []
 
         # Parse Defaults
-        defaults = deployment_data.get('defaults', {})
-        default_router_roles = defaults.get('router_roles', ['#all'])
+        defaults = deployment_data.get('defaults') or {}
+        default_router_roles = defaults.get('router_roles') or ['#all']
         default_encryption = defaults.get('encryption', True)
         default_create_router_policies = defaults.get('create_router_policies', False)
 
-        # Helper to check if we should process a service
+        # Helper to check if we should process a resource
         def should_process(name):
-            if not target_services:
+            if not target_names:
                 return True
-            return name in target_services
+            return name in target_names
         
-        all_identities = deployment_data.get('identities', [])
+        all_identities = deployment_data.get('identities') or []
         
         for ident in all_identities:
-            raw_role_attributes = ident.get('role_attributes', [])
+            if not ident: continue
+            
+            # Smart Mode Filtering for Identities
+            if not should_process(ident['name']):
+                continue
+                
+            raw_role_attributes = ident.get('role_attributes') or []
             role_attributes = [r.lstrip('#') for r in raw_role_attributes]
 
-            if 'tags' in ident:
+            if ident.get('tags'):
                 for tag in ident['tags']:
                     role_attributes.append(tag)
             
@@ -69,7 +75,8 @@ class FilterModule(object):
             })
 
         # 2. Process Services
-        for svc in deployment_data.get('services', []):
+        for svc in (deployment_data.get('services') or []):
+            if not svc: continue
             svc_name = svc['name']
             
             if not should_process(svc_name):
@@ -82,7 +89,7 @@ class FilterModule(object):
             svc_config_names = []
             
             # Host Config
-            if 'host' in svc:
+            if svc.get('host'):
                 host_cfg_name = f"{svc_name}-host-v1"
                 host_data = svc['host']
                 if 'protocol' not in host_data:
@@ -97,7 +104,7 @@ class FilterModule(object):
                 svc_config_names.append(host_cfg_name)
 
             # Intercept Config
-            if 'intercept' in svc:
+            if svc.get('intercept'):
                 int_cfg_name = f"{svc_name}-intercept-v1"
                 int_data = svc['intercept']
                 
@@ -130,7 +137,7 @@ class FilterModule(object):
                 svc_config_names.append(int_cfg_name)
 
             # Service Definition
-            raw_svc_role_attrs = svc.get('role_attributes', [svc_role_attr])
+            raw_svc_role_attrs = svc.get('role_attributes') or [svc_role_attr]
             svc_role_attrs = [r.lstrip('#') for r in raw_svc_role_attrs]
 
             services.append({
@@ -142,15 +149,13 @@ class FilterModule(object):
             })
 
             # Policies
-            policies = svc.get('policies', {})
+            policies = svc.get('policies') or {}
             
             # Bind Policy
-            if 'bind' in policies:
+            if policies.get('bind'):
                 bind_pol = policies['bind']
-                id_roles = bind_pol.get('roles', [])
+                id_roles = bind_pol.get('roles') or []
                 if 'identity' in bind_pol:
-                    # If referencing an identity by name, we assume it has a role attribute #identity_name
-                    # This is a convention.
                     id_roles.append(f"#{bind_pol['identity']}")
                 
                 service_policies.append({
@@ -163,9 +168,9 @@ class FilterModule(object):
                 })
 
             # Dial Policy
-            if 'dial' in policies:
+            if policies.get('dial'):
                 dial_pol = policies['dial']
-                id_roles = dial_pol.get('roles', [])
+                id_roles = dial_pol.get('roles') or []
                 if 'identity' in dial_pol:
                     id_roles.append(f"#{dial_pol['identity']}")
 
@@ -178,7 +183,7 @@ class FilterModule(object):
                     'state': svc_state
                 })
 
-            # Router Policy (Service Edge Router Policy)
+            # Router Policy
             router_pol_def = policies.get('router')
             create_router_pol = False
             
@@ -188,10 +193,10 @@ class FilterModule(object):
                 create_router_pol = True
             elif default_create_router_policies:
                 create_router_pol = True
-                router_pol_def = {} # Use defaults
+                router_pol_def = {} # Defaults
 
             if create_router_pol:
-                er_roles = router_pol_def.get('roles', default_router_roles)
+                er_roles = router_pol_def.get('roles') or default_router_roles
                 service_router_policies.append({
                     'name': f"{svc_name}-router",
                     'service_roles': [f"#{svc_name}"],
@@ -201,11 +206,12 @@ class FilterModule(object):
                 })
 
         # 3. Process Edge Router Policies (Global)
-        for rp in deployment_data.get('router_policies', []):
+        for rp in (deployment_data.get('router_policies') or []):
+            if not rp: continue
             router_policies.append({
                 'name': rp['name'],
-                'edge_router_roles': rp.get('edge_router_roles', ['#all']),
-                'identity_roles': rp.get('identity_roles', ['#all']),
+                'edge_router_roles': rp.get('edge_router_roles') or ['#all'],
+                'identity_roles': rp.get('identity_roles') or ['#all'],
                 'semantic': rp.get('semantic', 'AnyOf'),
                 'state': rp.get('state', 'present')
             })
