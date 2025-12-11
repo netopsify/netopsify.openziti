@@ -1,5 +1,7 @@
 #!/usr/bin/python
 # -*- coding: utf-8 -*-
+# Copyright (c) 2024, Mirza Waqas Ahmed <waqas@netopsify.net>
+# MIT License
 
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
@@ -7,38 +9,59 @@ __metaclass__ = type
 DOCUMENTATION = r'''
 ---
 module: openziti_loader
-short_description: Loads OpenZiti deployment definitions with Smart Mode support
+short_description: OpenZiti Deployment Definition Loader
 description:
-  - Scans the deployments directory for YAML definitions.
-  - Merges them into a single data structure.
-  - Implements Smart Mode: detects changed/deleted files via Git, recovers deleted content, and identifies target resources.
+  - Scans a directory structure for OpenZiti YAML definitions.
+  - Merges multiple YAML files into a single deployment data structure.
+  - Implements **Smart Mode** to optimize deployments by only targeting changed resources.
+  - Supports git integration to detect changed and deleted files for Smart Mode.
 options:
   base_dir:
-    description: Base directory containing the 'deployments' folder.
+    description:
+      - The absolute path to the base directory containing the 'deployments' folder.
+      - The module looks for 'deployments/services' and 'deployments/identities' inside this path.
     required: true
     type: path
   smart_mode:
-    description: Enable Smart Mode to only target changed resources.
+    description:
+      - Enable Smart Mode optimization.
+      - If True, the module scans git history to identify changed files.
+      - Only resources defined in changed files will be returned in 'target_names'.
+      - Deleted files are recovered from git history to mark resources as 'absent'.
     type: bool
     default: false
 author:
-  - Netopsify
+  - Waqas (@netopsify)
 '''
 
 EXAMPLES = r'''
-- name: Load OpenZiti Definitions
+- name: Load all definitions (Full Mode)
+  netopsify.openziti.openziti_loader:
+    base_dir: "{{ playbook_dir }}"
+    smart_mode: false
+  register: ziti_data
+
+- name: Load only changed definitions (Smart Mode)
   netopsify.openziti.openziti_loader:
     base_dir: "{{ playbook_dir }}"
     smart_mode: true
-  register: ziti_data
+  register: ziti_smart_data
+
+- name: Use loaded data
+  debug:
+    msg: "Targeting services: {{ ziti_smart_data.target_names }}"
 '''
 
 RETURN = r'''
 ziti_deployment:
-  description: The merged deployment data structure.
+  description: The fully merged dictionary of all deployment definitions.
+  returned: always
   type: dict
 target_names:
-  description: List of service/identity names that were changed (if smart_mode is True).
+  description: 
+    - A list of the names of services and identities that have changed.
+    - Returns None if smart_mode is False (implying all should be processed).
+  returned: always
   type: list
 '''
 
@@ -48,21 +71,47 @@ import subprocess
 from ansible.module_utils.basic import AnsibleModule
 
 def run_git_cmd(module, cmd, cwd):
+    """
+    Executes a git command and returns the output as a list of lines.
+    
+    Args:
+        module: The AnsibleModule instance.
+        cmd: List of command arguments.
+        cwd: Current working directory.
+        
+    Returns:
+        list: stdout lines or empty list on failure.
+    """
     rc, stdout, stderr = module.run_command(cmd, cwd=cwd)
     if rc != 0:
-        # If git fails (e.g. not a repo), we might want to warn and fallback to full mode?
-        # For now, let's log it.
         return []
     return stdout.splitlines()
 
 def load_yaml_file(path):
+    """
+    Loads a YAML file safely.
+    
+    Args:
+        path: Absolute path to the file.
+        
+    Returns:
+        dict: Parsed YAML data or empty dict.
+    """
     if not os.path.exists(path):
         return {}
     with open(path, 'r') as f:
         return yaml.safe_load(f) or {}
 
 def extract_names(data):
-    """Extracts names of services and identities from a deployment dict."""
+    """
+    Extracts names of services and identities from a deployment dict.
+    
+    Args:
+        data: The deployment dictionary.
+        
+    Returns:
+        list: A list of names string.
+    """
     names = []
     if not data:
         return names
@@ -83,7 +132,16 @@ def extract_names(data):
     return names
 
 def deep_merge(target, source):
-    """Merges source dict into target dict recursively."""
+    """
+    Merges source dict into target dict recursively (in-place).
+    
+    Args:
+        target: The target dictionary.
+        source: The source dictionary to merge in.
+        
+    Returns:
+        dict: The updated target dictionary.
+    """
     for k, v in source.items():
         if isinstance(v, dict):
             node = target.setdefault(k, {})
@@ -95,6 +153,9 @@ def deep_merge(target, source):
     return target
 
 def main():
+    """
+    Main entry point for the OpenZiti Loader module.
+    """
     module = AnsibleModule(
         argument_spec=dict(
             base_dir=dict(type='path', required=True),
@@ -138,7 +199,6 @@ def main():
             else:
                 # 2. If clean, check the latest commit (CI/CD or Post-Commit Local)
                 # We check changes between HEAD~1 and HEAD
-                # git diff --name-status HEAD~1 HEAD deployments/
                 # Output format: STATUS\tPATH
                 lines = run_git_cmd(module, ["git", "diff", "--name-status", "HEAD~1", "HEAD", "deployments/"], base_dir)
                 
@@ -160,15 +220,14 @@ def main():
             smart_mode = False
 
     # 2. Process ALL files (to build full model) AND extract targets
-    # We walk the directories.
-    
     # Helper to process a file
     def process_file(filepath, is_deleted=False, content=None):
         file_data = {}
         if is_deleted and content:
             try:
+                # Load recovered content from git
                 file_data = yaml.safe_load(content) or {}
-                # Inject state: absent
+                # Inject state: absent for all resources found in deleted file
                 root = file_data.get('ziti_deployment', file_data)
                 if 'services' in root:
                     for svc in root['services']:
@@ -184,13 +243,10 @@ def main():
 
         # Merge into main deployment
         # The structure usually has a root 'ziti_deployment' key, or is the dict itself.
-        # We want to merge the INNER content if 'ziti_deployment' key exists.
         data_to_merge = file_data.get('ziti_deployment', file_data)
         deep_merge(ziti_deployment, data_to_merge)
         
         # If Smart Mode, check if this file is in our changed list
-        # We need to match paths.
-        # filepath is absolute. changed_files are relative to base_dir.
         rel_path = os.path.relpath(filepath, base_dir)
         
         # Check if this file is relevant for target_names
@@ -212,19 +268,16 @@ def main():
     # 3. Process Deleted Files (Smart Mode only)
     if smart_mode:
         for del_path in deleted_files:
-            # Recover content
+            # Recover content from git history
             # git show HEAD:path
-            # Note: git show expects path relative to repo root. 
-            # If base_dir is repo root, del_path is correct.
             lines = run_git_cmd(module, ["git", "show", f"HEAD:{del_path}"], base_dir)
             content = "\n".join(lines)
             if content:
-                # We process this "ghost" file
                 # We construct a fake absolute path for logging/logic
                 abs_path = os.path.join(base_dir, del_path)
                 process_file(abs_path, is_deleted=True, content=content)
 
-    # If NOT smart mode, target_names should be None (process all)
+    # If NOT smart mode, target_names should be None (indicating process all)
     final_targets = list(target_names) if smart_mode else None
 
     module.exit_json(

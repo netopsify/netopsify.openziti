@@ -12,6 +12,8 @@ module: openziti_service_router_policy
 short_description: Manage OpenZiti Service Edge Router Policies
 description:
   - Create, update, and delete service edge router policies on an OpenZiti Controller.
+  - Controls which services are available on which edge routers.
+  - Essential for defining service reachability across the overlay network.
 options:
   ziti_controller_url:
     description:
@@ -20,75 +22,108 @@ options:
     type: str
   ziti_username:
     description:
-      - The username for authentication.
+      - The username for authentication with the OpenZiti Controller.
     required: true
     type: str
   ziti_password:
     description:
-      - The password for authentication.
+      - The password for authentication with the OpenZiti Controller.
     required: true
     type: str
   policy_name:
     description:
       - The name of the policy.
+      - Must be unique within the OpenZiti environment.
     required: true
     type: str
   service_roles:
     description:
-      - List of service roles.
+      - A list of service roles to include in this policy.
+      - e.g., ['@my-service', '#all'].
     required: true
     type: list
     elements: str
   edge_router_roles:
     description:
-      - List of edge router roles.
+      - A list of edge router roles to include in this policy.
+      - e.g., ['@router-01', '#all'].
     required: true
     type: list
     elements: str
   semantic:
     description:
-      - The semantic logic (AnyOf or AllOf).
+      - The semantic logic to apply when matching roles.
     default: AnyOf
     choices: [ AnyOf, AllOf ]
     type: str
   state:
     description:
-      - Whether the policy should exist or not.
+      - The desired state of the policy.
+      - If C(present), the policy will be created or updated.
+      - If C(absent), the policy will be removed.
     default: present
     choices: [ present, absent ]
     type: str
   validate_certs:
     description:
-      - Whether to validate SSL certificates.
+      - Whether to validate SSL certificates when connecting to the controller.
     default: true
     type: bool
 author:
-  - Waqas
+  - Waqas (@netopsify)
 '''
 
 EXAMPLES = r'''
-- name: Create a service router policy
+- name: Make all services available on all routers
   openziti_service_router_policy:
     ziti_controller_url: "https://ziti.example.com"
     ziti_username: "admin"
     ziti_password: "password"
-    policy_name: "my-service-router-policy"
-    service_roles: ["@my-service"]
+    policy_name: "all-services-all-routers"
+    service_roles: ["#all"]
     edge_router_roles: ["#all"]
     state: present
+
+- name: Restrict High Security Service to Secure Routers
+  openziti_service_router_policy:
+    ziti_controller_url: "https://ziti.example.com"
+    ziti_username: "admin"
+    ziti_password: "password"
+    policy_name: "high-sec-policy"
+    service_roles: ["#high-security"]
+    edge_router_roles: ["#secure-routers"]
+    semantic: "AllOf"
+    state: present
+
+- name: Remove a service router policy
+  openziti_service_router_policy:
+    ziti_controller_url: "https://ziti.example.com"
+    ziti_username: "admin"
+    ziti_password: "password"
+    policy_name: "deprecated-policy"
+    state: absent
 '''
 
 RETURN = r'''
 policy:
-  description: The policy details.
+  description: The full dictionary of the service router policy object.
   returned: success
   type: dict
   contains:
     id:
-      description: The ID of the policy.
+      description: The unique ID of the policy.
       type: str
     name:
       description: The name of the policy.
+      type: str
+    serviceRoles:
+      description: List of service roles associated.
+      type: list
+    edgeRouterRoles:
+      description: List of edge router roles associated.
+      type: list
+    semantic:
+      description: The semantic logic used.
       type: str
 '''
 
@@ -99,6 +134,9 @@ from ansible_collections.netopsify.openziti.plugins.module_utils.openziti_common
 )
 
 def main():
+    """
+    Main entry point for the OpenZiti Service Edge Router Policy module.
+    """
     module = AnsibleModule(
         argument_spec=dict(
             ziti_controller_url=dict(type='str', required=True),
@@ -139,8 +177,41 @@ def main():
 
     if state == 'present':
         if existing_policy:
-            # TODO: Update logic
-            result['policy'] = existing_policy.dict()
+            # Check for changes
+            current_svc_roles = set(existing_policy.serviceRoles or [])
+            desired_svc_roles = set(service_roles or [])
+            
+            current_er_roles = set(existing_policy.edgeRouterRoles or [])
+            desired_er_roles = set(edge_router_roles or [])
+            
+            needs_update = False
+            if current_svc_roles != desired_svc_roles:
+                needs_update = True
+                
+            if current_er_roles != desired_er_roles:
+                needs_update = True
+            
+            if existing_policy.semantic != semantic:
+                needs_update = True
+                
+            if needs_update:
+                if module.check_mode:
+                    result['changed'] = True
+                    result['policy'] = existing_policy.dict()
+                    module.exit_json(**result)
+                
+                update_data = OpenZitiServiceRouterPolicyCreate(
+                    name=policy_name,
+                    serviceRoles=service_roles,
+                    edgeRouterRoles=edge_router_roles,
+                    semantic=semantic
+                )
+                client.update_service_router_policy(existing_policy.id, update_data)
+                result['changed'] = True
+                updated_policy = client.get_service_router_policy_by_name(policy_name)
+                result['policy'] = updated_policy.dict()
+            else:
+                result['policy'] = existing_policy.dict()
         else:
             if module.check_mode:
                 result['changed'] = True

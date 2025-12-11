@@ -12,6 +12,7 @@ module: openziti_service
 short_description: Manage OpenZiti Services
 description:
   - Create, update, and delete services on an OpenZiti Controller.
+  - Associates services with role attributes and configurations.
 options:
   ziti_controller_url:
     description:
@@ -20,73 +21,108 @@ options:
     type: str
   ziti_username:
     description:
-      - The username for authentication.
+      - The username for authentication with the OpenZiti Controller.
     required: true
     type: str
   ziti_password:
     description:
-      - The password for authentication.
+      - The password for authentication with the OpenZiti Controller.
     required: true
     type: str
   service_name:
     description:
       - The name of the service to manage.
+      - Must be unique within the OpenZiti environment.
     required: true
     type: str
   role_attributes:
     description:
-      - List of role attributes.
+      - A list of role attributes to assign to the service.
+      - Used for policy matching (e.g., '#my-service-role').
     type: list
     elements: str
   configs:
     description:
-      - List of config names to associate with the service.
+      - A list of B(names) of configurations to associate with this service.
+      - The module will resolve these names to IDs automatically.
+      - If a config name is not found, the module will fail.
     type: list
     elements: str
   encryption_required:
     description:
-      - Whether encryption is required.
+      - Whether end-to-end encryption is required for this service.
     default: true
     type: bool
   state:
     description:
-      - Whether the service should exist or not.
+      - The desired state of the service.
+      - If C(present), the service will be created or updated.
+      - If C(absent), the service will be removed.
     default: present
     choices: [ present, absent ]
     type: str
   validate_certs:
     description:
-      - Whether to validate SSL certificates.
+      - Whether to validate SSL certificates when connecting to the controller.
     default: true
     type: bool
 author:
-  - Waqas
+  - Waqas (@netopsify)
 '''
 
 EXAMPLES = r'''
-- name: Create a service
+- name: Create a basic service
   openziti_service:
     ziti_controller_url: "https://ziti.example.com"
     ziti_username: "admin"
     ziti_password: "password"
-    service_name: "my-service"
-    role_attributes: ["my-service.role"]
-    configs: ["my-service-host-config"]
+    service_name: "weather-service"
+    role_attributes: ["#weather-reporting"]
     state: present
+
+- name: Create a service with associated configs
+  openziti_service:
+    ziti_controller_url: "https://ziti.example.com"
+    ziti_username: "admin"
+    ziti_password: "password"
+    service_name: "internal-crm"
+    role_attributes: ["#crm"]
+    configs: 
+      - "crm-host-v1-config"
+      - "crm-intercept-v1-config"
+    encryption_required: true
+    state: present
+
+- name: Delete a service
+  openziti_service:
+    ziti_controller_url: "https://ziti.example.com"
+    ziti_username: "admin"
+    ziti_password: "password"
+    service_name: "old-service"
+    state: absent
 '''
 
 RETURN = r'''
 service:
-  description: The service details.
+  description: The full dictionary of the service object.
   returned: success
   type: dict
   contains:
     id:
-      description: The ID of the service.
+      description: The unique ID of the service.
       type: str
     name:
       description: The name of the service.
       type: str
+    roleAttributes:
+      description: List of role attributes assigned.
+      type: list
+    configs:
+      description: List of ID's of associated configurations.
+      type: list
+    encryptionRequired:
+      description: Boolean indicating if encryption is required.
+      type: bool
 '''
 
 import traceback
@@ -94,6 +130,9 @@ from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.netopsify.openziti.plugins.module_utils.openziti_common import OpenZitiClient, OpenZitiServiceCreate, HAS_DEPS, IMPORT_ERROR
 
 def main():
+    """
+    Main entry point for the OpenZiti Service module.
+    """
     module = AnsibleModule(
         argument_spec=dict(
             ziti_controller_url=dict(type='str', required=True),
@@ -144,8 +183,41 @@ def main():
                     module.fail_json(msg=f"Config '{c_name}' not found.")
 
         if existing_service:
-            # TODO: Update logic
-            result['service'] = existing_service.dict()
+            # Check for changes
+            current_roles = set(existing_service.roleAttributes or [])
+            desired_roles = set(role_attributes or [])
+            
+            current_configs = set(existing_service.configs or [])
+            desired_configs = set(config_ids or [])
+            
+            needs_update = False
+            if current_roles != desired_roles:
+                needs_update = True
+            
+            if current_configs != desired_configs:
+                needs_update = True
+                
+            if existing_service.encryptionRequired != encryption_required:
+                needs_update = True
+                
+            if needs_update:
+                if module.check_mode:
+                    result['changed'] = True
+                    result['service'] = existing_service.dict()
+                    module.exit_json(**result)
+                
+                update_data = OpenZitiServiceCreate(
+                    name=service_name,
+                    roleAttributes=role_attributes,
+                    configs=config_ids,
+                    encryptionRequired=encryption_required
+                )
+                client.update_service(existing_service.id, update_data)
+                result['changed'] = True
+                updated_service = client.get_service_by_name(service_name)
+                result['service'] = updated_service.dict()
+            else:
+                result['service'] = existing_service.dict()
         else:
             if module.check_mode:
                 result['changed'] = True

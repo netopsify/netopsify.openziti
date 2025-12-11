@@ -12,6 +12,7 @@ module: openziti_config
 short_description: Manage OpenZiti Service Configurations
 description:
   - Create, update, and delete service configurations on an OpenZiti Controller.
+  - Supports various config types such as 'host.v1' and 'intercept.v1'.
 options:
   ziti_controller_url:
     description:
@@ -20,85 +21,109 @@ options:
     type: str
   ziti_username:
     description:
-      - The username for authentication.
+      - The username for authentication with the OpenZiti Controller.
     required: true
     type: str
   ziti_password:
     description:
-      - The password for authentication.
+      - The password for authentication with the OpenZiti Controller.
     required: true
     type: str
   config_name:
     description:
       - The name of the configuration to manage.
+      - Must be unique within the OpenZiti environment.
     required: true
     type: str
   config_type_name:
     description:
-      - The name of the config type (e.g., 'host.v1', 'intercept.v1').
+      - The name of the config type schema.
+      - Common examples include 'host.v1', 'intercept.v1', 'ziti-tunneler-client.v1'.
     required: true
     type: str
   data:
     description:
-      - The configuration data as a dictionary.
+      - The configuration data payload as a dictionary.
+      - The structure depends on the selected C(config_type_name).
     required: true
     type: dict
   state:
     description:
-      - Whether the config should exist or not.
+      - The desired state of the configuration.
+      - If C(present), the configuration will be created or updated.
+      - If C(absent), the configuration will be removed.
     default: present
     choices: [ present, absent ]
     type: str
   validate_certs:
     description:
-      - Whether to validate SSL certificates.
+      - Whether to validate SSL certificates when connecting to the controller.
     default: true
     type: bool
 author:
-  - Waqas
+  - Waqas (@netopsify)
 '''
 
 EXAMPLES = r'''
-- name: Create a host config
+- name: Create a host config for a service
   openziti_config:
     ziti_controller_url: "https://ziti.example.com"
     ziti_username: "admin"
     ziti_password: "password"
-    config_name: "my-service-host-config"
+    config_name: "web-app-host-config"
     config_type_name: "host.v1"
     data:
       protocol: "tcp"
       address: "localhost"
       port: 8080
     state: present
+
+- name: Create an intercept config to map a service to a local address
+  openziti_config:
+    ziti_controller_url: "https://ziti.example.com"
+    ziti_username: "admin"
+    ziti_password: "password"
+    config_name: "web-app-intercept-config"
+    config_type_name: "intercept.v1"
+    data:
+      protocols: ["tcp"]
+      addresses: ["web.service.ziti"]
+      portRanges:
+        - low: 80
+          high: 80
+    state: present
 '''
 
 RETURN = r'''
 config:
-  description: The config details.
+  description: The detailed dictionary of the configuration object.
   returned: success
   type: dict
   contains:
     id:
-      description: The ID of the config.
+      description: The unique ID assigned to the configuration.
       type: str
     name:
-      description: The name of the config.
+      description: The name of the configuration.
       type: str
     configTypeId:
-      description: The ID of the config type.
+      description: The ID of the configuration type this config adheres to.
       type: str
     data:
-      description: The configuration data.
+      description: The actual configuration data payload.
       type: dict
 '''
 
 import traceback
+import json
 from ansible.module_utils.basic import AnsibleModule
 from ansible_collections.netopsify.openziti.plugins.module_utils.openziti_common import OpenZitiClient, OpenZitiConfig, OpenZitiConfigCreate, HAS_DEPS, IMPORT_ERROR
 
 
 def main():
+    """
+    Main entry point for the OpenZiti Config module.
+    """
     module = AnsibleModule(
         argument_spec=dict(
             ziti_controller_url=dict(type='str', required=True),
@@ -136,19 +161,35 @@ def main():
     existing_config = client.get_config_by_name(config_name)
 
     if state == 'present':
-        # Resolve config type ID
+        # Resolve config type ID from the provided name
         config_type_id = client.get_config_type_by_name(config_type_name)
         if not config_type_id:
-            module.fail_json(msg=f"Config Type '{config_type_name}' not found.")
+            module.fail_json(msg=f"Config Type '{config_type_name}' not found on the controller.")
 
         if existing_config:
-            # Check if update is needed
-            # For simplicity, we compare data. In a real scenario, deep comparison is needed.
-            # We will assume if data is different, we update (not implemented yet in common, but let's assume create/replace)
-            # Since we didn't implement update in common yet, we'll just return existing.
-            # TODO: Implement update logic
-            result['config'] = existing_config.dict()
+            # Check if update is needed by comparing data payloads
+            # We sort keys to ensure improved consistency in comparison
+            current_data_str = json.dumps(existing_config.data, sort_keys=True)
+            new_data_str = json.dumps(data, sort_keys=True)
+            
+            if current_data_str != new_data_str:
+                if module.check_mode:
+                    result['changed'] = True
+                    module.exit_json(**result)
+
+                new_config = OpenZitiConfigCreate(
+                    name=config_name,
+                    configTypeId=config_type_id,
+                    data=data
+                )
+                client.update_config(existing_config.id, new_config)
+                result['changed'] = True
+                result['config'] = new_config.dict()
+            else:
+                result['config'] = existing_config.dict()
+
         else:
+            # Create new config
             if module.check_mode:
                 result['changed'] = True
                 module.exit_json(**result)

@@ -1,95 +1,91 @@
-# Ansible Collection: `netopsify.openziti`
+# OpenZiti Ansible Collection
 
-This document provides technical documentation for the custom `netopsify.openziti` Ansible Collection.
+The `netopsify.openziti` collection provides a robust, declarative way to manage OpenZiti Overlay Networks using Ansible. 
 
-## 📦 Modules
+It is designed to handle complex Day-2 operations, enabling you to define your network as code (NaC) and apply it idempotently.
 
-### 1. `openziti_identity`
-Manages the lifecycle of OpenZiti Identities.
+## Features
 
-| Parameter | Type | Required | Default | Description |
-| :--- | :--- | :--- | :--- | :--- |
-| `ziti_controller_url` | String | **Yes** | - | URL of the OpenZiti Controller. |
-| `ziti_username` | String | **Yes** | - | Admin username. |
-| `ziti_password` | String | **Yes** | - | Admin password. |
-| `identity_name` | String | **Yes** | - | Name of the identity. |
-| `identity_type` | String | No | `Device` | `Device`, `User`, or `Service`. |
-| `role_attributes` | List | No | `[]` | List of role attributes (e.g., `["#admins"]`). |
-| `enrollment_method` | String | No | `ott` | Enrollment method (`ott`, `updb`, `ottca`). |
-| `state` | String | No | `present` | `present` or `absent`. |
+*   **Declarative Configuration**: Define Services, Identities, and Policies in simple YAML files.
+*   **Idempotency**: Modules check state before making changes, ensuring safe re-runs.
+*   **Smart Mode**: Only targets changed resources for faster execution in CI/CD pipelines.
+*   **Full Lifecycle**: Create, Update, and Delete support for all major OpenZiti resources.
 
-### 2. `openziti_service`
-Manages OpenZiti Services.
+## Documentation
 
-| Parameter | Type | Required | Default | Description |
-| :--- | :--- | :--- | :--- | :--- |
-| `service_name` | String | **Yes** | - | Name of the service. |
-| `role_attributes` | List | No | `[]` | List of role attributes. |
-| `configs` | List | No | `[]` | List of **Config IDs** to associate. |
-| `encryption_required` | Bool | No | `true` | Require end-to-end encryption. |
-| `state` | String | No | `present` | `present` or `absent`. |
+*   [**Architecture Overview**](docs/ARCHITECTURE.md): Learn how the collection processes your configuration.
+*   [**Filter Logic**](docs/FILTERS.md): Understand the `ziti_transform` filter.
 
-### 3. `openziti_config`
-Manages Configuration objects (Host.v1, Intercept.v1).
+## Getting Started
 
-| Parameter | Type | Required | Default | Description |
-| :--- | :--- | :--- | :--- | :--- |
-| `config_name` | String | **Yes** | - | Name of the config. |
-| `config_type_name` | String | **Yes** | - | Type (e.g., `host.v1`, `intercept.v1`). |
-| `data` | Dict | **Yes** | - | JSON/Dict payload for the config. |
+### 1. Installation
 
-### 4. `openziti_service_policy`
-Manages Bind and Dial policies.
+Install the collection locally:
 
-| Parameter | Type | Required | Default | Description |
-| :--- | :--- | :--- | :--- | :--- |
-| `policy_name` | String | **Yes** | - | Name of the policy. |
-| `policy_type` | String | **Yes** | - | `Bind` or `Dial`. |
-| `service_roles` | List | **Yes** | - | Roles of services to match. |
-| `identity_roles` | List | **Yes** | - | Roles of identities to match. |
-| `semantic` | String | No | `AnyOf` | `AnyOf` or `AllOf`. |
+```bash
+ansible-galaxy collection install netopsify.openziti
+```
 
----
+### 2. Define your Network
 
-## 🧩 Roles
+Create a directory structure for your definitions:
 
-### `openziti_infra`
-This is the **Orchestrator Role**. It does not take direct parameters but expects specific variables to be populated (usually by the `ziti_transform` filter).
+```
+deployments/
+├── services/
+│   └── my-web-service.yml
+└── identities/
+    └── my-device.yml
+```
 
-**Expected Variables**:
-*   `openziti_services`: List of service dicts.
-*   `openziti_configs`: List of config dicts.
-*   `openziti_service_policies`: List of policy dicts.
-*   `openziti_router_policies`: List of router policy dicts.
+**Example `my-web-service.yml`:**
 
-### `openziti_identity`
-Dedicated role for managing identities.
-**Expected Variables**:
-*   `openziti_identities`: List of identity dicts.
+```yaml
+services:
+  - name: my-web-service
+    host:
+      address: localhost
+      port: 8080
+      protocol: tcp
+    intercept:
+      address: web.service.ziti
+      port: 80
+      protocol: tcp
+    policies:
+      bind:
+        roles: ['#all'] 
+      dial:
+        roles: ['#employees']
+```
 
----
+### 3. Run the Playbook
 
-## 🔌 Plugins
+Use the `openziti_infra` role in your playbook:
 
-### `ziti_transform` (Filter)
-**File**: `plugins/filter/openziti_filters.py`
+```yaml
+- hosts: localhost
+  collections:
+    - netopsify.openziti
+  tasks:
+    - name: Load Definitions
+      openziti_loader:
+        base_dir: "{{ playbook_dir }}"
+        smart_mode: true
+      register: ziti_data
 
-This filter is responsible for the **Business Logic** of the automation.
-1.  **Input**: Takes the hierarchical `ziti_deployment` dictionary.
-2.  **Processing**:
-    *   Iterates over Services and Identities.
-    *   Generates implicit Config names (e.g., `<svc>-host-v1`).
-    *   Generates implicit Policy names (e.g., `<svc>-bind`).
-    *   Strips `#` prefixes from role attributes.
-    *   Propagates `state: absent` to all child resources.
-3.  **Output**: Returns a dictionary containing flat lists for the `openziti_infra` and `openziti_identity` roles.
+    - name: Transform Data
+      set_fact:
+        ziti_resources: "{{ ziti_data.ziti_deployment | netopsify.openziti.ziti_transform(ziti_data.target_names) }}"
 
----
+    - name: Apply Infrastructure
+      include_role:
+        name: netopsify.openziti.openziti_infra
+      vars:
+        ziti_resources: "{{ ziti_resources }}"
+```
 
-## 👨‍💻 Development Guide
+## Application
+This collection is used by the `openziti_automation` project to manage the entire stack.
 
-### How to Add a New Module
-1.  **Define Pydantic Model**: Add the data model to `plugins/module_utils/openziti_common.py`.
-2.  **Add API Methods**: Add `create_...`, `get_...`, `delete_...` methods to the `OpenZitiClient` class in `openziti_common.py`.
-3.  **Create Module**: Create a new file in `plugins/modules/` (copy an existing one like `openziti_service.py` as a template).
-4.  **Update Role**: Add a task to `roles/openziti_infra/tasks/main.yml` to utilize the new module.
+## License
+MIT
